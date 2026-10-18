@@ -32,7 +32,7 @@ PI_SCOPES = (
 
 
 class EmbedModel:
-    """Loads embedding model on first use, not on startup."""
+    """Loads embedding model on first use with GPU acceleration."""
 
     def __init__(self, model_name: str):
         self._model_name = model_name
@@ -40,9 +40,20 @@ class EmbedModel:
 
     def encode(self, *args, **kwargs):
         if self._model is None:
+            import torch
             from sentence_transformers import SentenceTransformer
 
-            self._model = SentenceTransformer(self._model_name)
+            device = (
+                "mps"
+                if torch.backends.mps.is_available()
+                else ("cuda" if torch.cuda.is_available() else "cpu")
+            )
+            logger.info(
+                "Initializing SentenceTransformer '%s' on device '%s'...",
+                self._model_name,
+                device,
+            )
+            self._model = SentenceTransformer(self._model_name, device=device)
         return self._model.encode(*args, **kwargs)
 
 
@@ -81,6 +92,13 @@ def validate_environment(ollama_model_name: str, embedding_model_name: str | Non
 
     try:
         ollama.Client().show(ollama_model_name)
+        logger.info("Pre-warming Ollama model '%s' into VRAM...", ollama_model_name)
+        ollama.chat(
+            model=ollama_model_name,
+            messages=[{"role": "user", "content": "warmup"}],
+            options={"num_predict": 1},
+            keep_alive=-1,
+        )
     except Exception as exc:
         logger.error(
             "Ollama or model '%s' unavailable: %s. Start Ollama and run "
@@ -176,25 +194,31 @@ def main():
     session_factory, model = validate_environment(ollama_model, embedding_model)
     from src.agent_tools import answer_question
 
-    # sp = authenticate_user()
-    # logger.info("Authentication successful.")
-
     logger.info(f"Using Ollama LLM model: {ollama_model}")
 
     print("Ready! Type 'exit' or 'quit' to stop.")
 
+    def stream_printer(chunk: str):
+        sys.stdout.write(chunk)
+        sys.stdout.flush()
+
     while True:
         user_question = input(
-            "What would you like to know about your spotify data?: "
+            "\nWhat would you like to know about your spotify data?: "
         ).strip()
         if not user_question:
             continue
         if user_question.lower() in ["exit", "quit"]:
             break
 
+        print("\n", end="")
         with session_factory() as session:
-            ans = answer_question(user_question, session, model)
-            print(f"\n{ans}\n")
+            ans = answer_question(
+                user_question, session, model, stream_callback=stream_printer
+            )
+            if not ans.strip():
+                print("No response generated.")
+            print("\n")
 
 
 if __name__ == "__main__":

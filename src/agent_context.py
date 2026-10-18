@@ -32,8 +32,8 @@ Issue one tool call at a time without explanatory prose. SQL must be one SELECT 
 WITH...SELECT. Use raw rows for event lists and aggregation for summaries. Use
 half-open date ranges. Group selected non-aggregate fields. Filter genres only with
 `artist_genres ILIKE '%genre%'`. Choose a LIMIT appropriate to the user's request.
-For overall top N items broken down by period, select the top N in a CTE, then join
-it back to history and aggregate by period in one query.
+For complex or multi-part requests (such as most AND least played songs per year),
+start by querying the most played songs first, or write simple per-year aggregations.
 
 Tool errors are not evidence. Base answers only on returned values. Explain semantic
 matches only with returned genres and metrics. State when no matches exist. Respond

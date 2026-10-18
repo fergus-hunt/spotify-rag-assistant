@@ -1,3 +1,4 @@
+import functools
 import json
 import logging
 import os
@@ -23,13 +24,19 @@ logger = logging.getLogger(__name__)
 
 
 MODEL_NAME = os.environ.get("OLLAMA_MODEL", "llama3.2")
-OLLAMA_KEEP_ALIVE = os.environ.get("OLLAMA_KEEP_ALIVE", "30m")
+raw_keep_alive = os.environ.get("OLLAMA_KEEP_ALIVE", "30m")
+try:
+    OLLAMA_KEEP_ALIVE = int(raw_keep_alive)
+except ValueError:
+    OLLAMA_KEEP_ALIVE = raw_keep_alive
+
 MAX_TOOL_TURNS = int(os.environ.get("MAX_TOOL_TURNS", "4"))
 
 OLLAMA_OPTIONS = {
     "temperature": 0.1,
-    "num_ctx": int(os.environ.get("OLLAMA_NUM_CTX", "4096")),
-    "num_predict": int(os.environ.get("OLLAMA_NUM_PREDICT", "768")),
+    "num_gpu": int(os.environ.get("OLLAMA_NUM_GPU", "99")),
+    "num_ctx": int(os.environ.get("OLLAMA_NUM_CTX", "2048")),
+    "num_predict": int(os.environ.get("OLLAMA_NUM_PREDICT", "384")),
 }
 
 NO_TOOL_RECOVERY = (
@@ -44,7 +51,9 @@ def get_val(value: Any, name: str, default: Any = None) -> Any:
     return getattr(value, name, default)
 
 
-def answer_question(question: str, session: Session, embed_model) -> str:
+def answer_question(
+    question: str, session: Session, embed_model, stream_callback=None
+) -> str:
     messages: list[Any] = [
         {
             "role": "system",
@@ -63,6 +72,7 @@ def answer_question(question: str, session: Session, embed_model) -> str:
     try:
         for turn in range(1, MAX_TOOL_TURNS + 1):
             logger.info("Agent Turn %d/%d: Prompting model...", turn, MAX_TOOL_TURNS)
+
             response = ollama.chat(
                 model=MODEL_NAME,
                 messages=messages,
@@ -88,6 +98,9 @@ def answer_question(question: str, session: Session, embed_model) -> str:
                     messages.append({"role": "assistant", "content": ""})
                     messages.append({"role": "user", "content": NO_TOOL_RECOVERY})
                     continue
+
+                if stream_callback and content:
+                    stream_callback(content)
 
                 logger.info(
                     "Agent completed at Turn %d/%d after %d call(s), %d successful.",
@@ -291,7 +304,7 @@ def validate_sql(sql: str) -> str:
         catalog_name = normalise_identifier(table.args.get("catalog"))
 
         allowed = (
-            table_name == "v_listening_history"
+            table_name in ("v_listening_history", "mv_listening_history")
             and schema_name in ("", "public")
             and not catalog_name
         )
@@ -365,5 +378,12 @@ def semantic_search(
     return rows
 
 
+@functools.lru_cache(maxsize=512)
+def _cached_encode(question: str, embed_model_name: str, _encode_fn):
+    return _encode_fn(question)
+
+
 def embed_question(question: str, embed_model) -> list[float]:
-    return embed_model.encode(question).tolist()
+    # Convert numpy array / list cleanly
+    res = embed_model.encode(question)
+    return res.tolist() if hasattr(res, "tolist") else list(res)

@@ -4,16 +4,25 @@ from collections.abc import Sequence
 from typing import TypeVar
 
 import spotipy
+import torch
 from sentence_transformers import SentenceTransformer
 from spotipy.oauth2 import SpotifyClientCredentials
 from sqlalchemy import text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
-from src.db import SessionLocal
+from src.db import SessionLocal, refresh_materialized_view
 from src.models.audio_features import AudioFeatures
 from src.models.embedding import Embedding
 
 T = TypeVar("T")
+
+
+def get_device() -> str:
+    if torch.backends.mps.is_available():
+        return "mps"
+    if torch.cuda.is_available():
+        return "cuda"
+    return "cpu"
 
 
 def split_to_chunks(values: Sequence[T], size: int) -> list[list[T]]:
@@ -205,7 +214,11 @@ def enrich_embeddings(
         return {"embedding_candidates": 0, "embeddings_upserted": 0}
 
     try:
-        model = SentenceTransformer(model_name)
+        device = get_device()
+        logger.info(
+            "Loading embedding model '%s' on device '%s'...", model_name, device
+        )
+        model = SentenceTransformer(model_name, device=device)
     except Exception as e:
         logger.warning("Failed to initialize embedding model '%s': %s", model_name, e)
         return {"embedding_candidates": len(rows), "embeddings_upserted": 0}
@@ -247,4 +260,5 @@ def enrich_imports(logger: logging.Logger) -> dict[str, int]:
         stats["embedding_candidates"],
         stats["embeddings_upserted"],
     )
+    refresh_materialized_view()
     return stats

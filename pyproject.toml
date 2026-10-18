@@ -13,6 +13,7 @@ ignore = []
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+norecursedirs = [".*", "venv", "build", "dist"]
 markers = [
     "unit",
 ]
